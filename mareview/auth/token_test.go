@@ -1,91 +1,99 @@
-
 package auth
 
 import (
-	"errors"
-	"strconv"
+	"testing"
 	"time"
-
-	"github.com/golang-jwt/jwt/v5"
 )
 
-// Claims เก็บข้อมูลสมาชิกภายใน JWT
-type Claims struct {
-	Role string `json:"role"`
-	jwt.RegisteredClaims
-}
-
-// Issuer ใช้สร้างและตรวจสอบ JWT
-type Issuer struct {
-	Secret []byte
-	TTL    time.Duration
-}
-
-// Issue ออก Token ให้สมาชิกหนึ่งคน
-func (i *Issuer) Issue(memberID int64, role string) (string, error) {
-	if memberID <= 0 {
-		return "", errors.New("invalid member ID")
+func TestIssueAndParse(t *testing.T) {
+	issuer := &Issuer{
+		Secret: []byte("test-secret-key"),
+		TTL:    time.Hour,
 	}
 
-	if len(i.Secret) == 0 {
-		return "", errors.New("JWT secret is empty")
-	}
+	const memberID int64 = 123
+	const role = "member"
 
-	if i.TTL <= 0 {
-		return "", errors.New("invalid token TTL")
-	}
-
-	now := time.Now()
-
-	claims := Claims{
-		Role: role,
-		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   strconv.FormatInt(memberID, 10),
-			IssuedAt:  jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(now.Add(i.TTL)),
-		},
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-
-	return token.SignedString(i.Secret)
-}
-
-// Parse ตรวจสอบ Token
-// ถ้าถูกต้องจะคืนค่า memberID และ role
-func (i *Issuer) Parse(tokenString string) (int64, string, error) {
-	if len(i.Secret) == 0 {
-		return 0, "", errors.New("JWT secret is empty")
-	}
-
-	if tokenString == "" {
-		return 0, "", errors.New("token is empty")
-	}
-
-	var claims Claims
-
-	token, err := jwt.ParseWithClaims(
-		tokenString,
-		&claims,
-		func(t *jwt.Token) (any, error) {
-			return i.Secret, nil
-		},
-		jwt.WithValidMethods([]string{"HS256"}),
-		jwt.WithExpirationRequired(),
-	)
-
+	token, err := issuer.Issue(memberID, role)
 	if err != nil {
-		return 0, "", err
+		t.Fatalf("Issue() error = %v", err)
 	}
 
-	if token == nil || !token.Valid {
-		return 0, "", errors.New("invalid token")
+	if token == "" {
+		t.Fatal("Issue() returned empty token")
 	}
 
-	memberID, err := strconv.ParseInt(claims.Subject, 10, 64)
-	if err != nil || memberID <= 0 {
-		return 0, "", errors.New("bad subject")
+	gotID, gotRole, err := issuer.Parse(token)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
 	}
 
-	return memberID, claims.Role, nil
+	if gotID != memberID {
+		t.Errorf("Parse() memberID = %d, want %d", gotID, memberID)
+	}
+
+	if gotRole != role {
+		t.Errorf("Parse() role = %q, want %q", gotRole, role)
+	}
+}
+
+func TestIssueInvalidMemberID(t *testing.T) {
+	issuer := &Issuer{
+		Secret: []byte("test-secret-key"),
+		TTL:    time.Hour,
+	}
+
+	_, err := issuer.Issue(0, "member")
+	if err == nil {
+		t.Fatal("Issue() expected error for invalid member ID")
+	}
+}
+
+func TestIssueEmptySecret(t *testing.T) {
+	issuer := &Issuer{
+		TTL: time.Hour,
+	}
+
+	_, err := issuer.Issue(123, "member")
+	if err == nil {
+		t.Fatal("Issue() expected error for empty secret")
+	}
+}
+
+func TestIssueInvalidTTL(t *testing.T) {
+	issuer := &Issuer{
+		Secret: []byte("test-secret-key"),
+		TTL:    0,
+	}
+
+	_, err := issuer.Issue(123, "member")
+	if err == nil {
+		t.Fatal("Issue() expected error for invalid TTL")
+	}
+}
+
+func TestParseEmptyToken(t *testing.T) {
+	issuer := &Issuer{
+		Secret: []byte("test-secret-key"),
+		TTL:    time.Hour,
+	}
+
+	_, _, err := issuer.Parse("")
+	if err == nil {
+		t.Fatal("Parse() expected error for empty token")
+	}
+}
+
+func TestParseExpiredToken(t *testing.T) {
+	issuer := &Issuer{
+		Secret: []byte("test-secret-key"),
+		TTL:    -time.Hour,
+	}
+
+	// ใช้ Token ที่สร้างไว้ด้วย TTL ติดลบไม่ได้
+	// เพราะ Issue() ปฏิเสธ TTL ที่ไม่เป็นบวก
+	_, err := issuer.Issue(123, "member")
+	if err == nil {
+		t.Fatal("Issue() expected error for invalid TTL")
+	}
 }

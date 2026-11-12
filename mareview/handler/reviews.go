@@ -30,7 +30,8 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 
 // reviewReq ข้อมูลที่รับจากผู้ใช้ตอนเขียนรีวิวหอพัก
 type reviewReq struct {
-	Text string `json:"text"`
+	Text   string `json:"text"`
+	Rating int16  `json:"rating"`
 }
 
 // AddReview เพิ่มรีวิวหอพัก
@@ -48,14 +49,26 @@ func (h *Handler) AddReview(w http.ResponseWriter, r *http.Request) {
 	}
 
 	text := strings.TrimSpace(req.Text)
+
 	if utf8.RuneCountInString(text) < 10 {
 		writeError(w, http.StatusBadRequest, "REVIEW_TOO_SHORT", "รีวิวต้องมีอย่างน้อย 10 ตัวอักษร")
 		return
 	}
 
+	if req.Rating < 1 || req.Rating > 5 {
+		writeError(w, http.StatusBadRequest, "INVALID_RATING", "คะแนนต้องอยู่ระหว่าง 1-5")
+		return
+	}
+
 	who := mw.WhoFrom(r.Context())
 
-	rv, err := h.Store.AddReview(r.Context(), who.ID, dormID, text)
+	rv, err := h.Store.AddReview(
+		r.Context(),
+		who.ID,
+		dormID,
+		text,
+		req.Rating,
+	)
 
 	switch {
 	case errors.Is(err, store.ErrDuplicate):
