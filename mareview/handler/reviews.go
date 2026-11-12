@@ -1,81 +1,109 @@
 package handler
 
 import (
-    "encoding/json"
-    "errors"
-    "net/http"
-    "strings"
-    "unicode/utf8"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strings"
+	"unicode/utf8"
 
-    "moviehub/mw"
-    "moviehub/store"
+	"mareview/mw"
+	"mareview/store"
 )
 
+// Me แสดงข้อมูลสมาชิกที่เข้าสู่ระบบอยู่
 func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
-    who := mw.WhoFrom(r.Context())
-    m, err := h.Store.MemberByID(r.Context(), who.ID)
-    if errors.Is(err, store.ErrNotFound) {
-        writeError(w, http.StatusUnauthorized, "LOGIN_REQUIRED", "กรุณาเข้าสู่ระบบก่อน")
-        return
-    }
-    if err != nil {
-        internal(w, err)
-        return
-    }
-    writeJSON(w, http.StatusOK, m)
+	who := mw.WhoFrom(r.Context())
+
+	m, err := h.Store.MemberByID(r.Context(), who.ID)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusUnauthorized, "LOGIN_REQUIRED", "กรุณาเข้าสู่ระบบก่อน")
+		return
+	}
+	if err != nil {
+		internal(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, m)
 }
 
+// reviewReq ข้อมูลที่รับจากผู้ใช้ตอนเขียนรีวิวหอพัก
 type reviewReq struct {
-    Text string `json:"text"`
+	Text string `json:"text"`
 }
 
+// AddReview เพิ่มรีวิวหอพัก
 func (h *Handler) AddReview(w http.ResponseWriter, r *http.Request) {
-    movieID, ok := pathID(r, "id")
-    if !ok {
-        writeError(w, http.StatusBadRequest, "BAD_ID", "เลขหนังต้องเป็นตัวเลข")
-        return
-    }
-    var req reviewReq
-    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-        writeError(w, http.StatusBadRequest, "BAD_JSON", "อ่านกล่อง JSON ไม่ออก")
-        return
-    }
-    text := strings.TrimSpace(req.Text)
-    if utf8.RuneCountInString(text) < 10 {
-        writeError(w, http.StatusBadRequest, "REVIEW_TOO_SHORT", "รีวิวสั้นเกินไป")
-        return
-    }
-    who := mw.WhoFrom(r.Context()) // เลขสมาชิกมาจากตั๋วเท่านั้น
-    rv, err := h.Store.AddReview(r.Context(), who.ID, movieID, text)
-    switch {
-    case errors.Is(err, store.ErrDuplicate):
-        writeError(w, http.StatusConflict, "ALREADY_REVIEWED", "คุณรีวิวเรื่องนี้ไปแล้ว")
-        return
-    case errors.Is(err, store.ErrNoMovie):
-        writeError(w, http.StatusNotFound, "MOVIE_NOT_FOUND", "ไม่พบหนังเรื่องนี้")
-        return
-    case err != nil:
-        internal(w, err)
-        return
-    }
-    writeJSON(w, http.StatusCreated, map[string]any{"id": rv.ID, "text": rv.Text, "createdAt": rv.CreatedAt})
+	dormID, ok := pathID(r, "id")
+	if !ok {
+		writeError(w, http.StatusBadRequest, "BAD_ID", "รหัสหอพักต้องเป็นตัวเลขที่มากกว่า 0")
+		return
+	}
+
+	var req reviewReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "BAD_JSON", "รูปแบบ JSON ไม่ถูกต้อง")
+		return
+	}
+
+	text := strings.TrimSpace(req.Text)
+	if utf8.RuneCountInString(text) < 10 {
+		writeError(w, http.StatusBadRequest, "REVIEW_TOO_SHORT", "รีวิวต้องมีอย่างน้อย 10 ตัวอักษร")
+		return
+	}
+
+	who := mw.WhoFrom(r.Context())
+
+	rv, err := h.Store.AddReview(r.Context(), who.ID, dormID, text)
+
+	switch {
+	case errors.Is(err, store.ErrDuplicate):
+		writeError(w, http.StatusConflict, "ALREADY_REVIEWED", "คุณรีวิวหอพักนี้ไปแล้ว")
+		return
+
+	case errors.Is(err, store.ErrNoDormitory):
+		writeError(w, http.StatusNotFound, "DORMITORY_NOT_FOUND", "ไม่พบหอพักนี้")
+		return
+
+	case err != nil:
+		internal(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"id":        rv.ID,
+		"text":      rv.Text,
+		"createdAt": rv.CreatedAt,
+	})
 }
 
+// DeleteReview ลบรีวิวของสมาชิก หรือรีวิวที่ผู้ดูแลระบบมีสิทธิ์ลบ
 func (h *Handler) DeleteReview(w http.ResponseWriter, r *http.Request) {
-    reviewID, ok := pathID(r, "reviewId")
-    if !ok {
-        writeError(w, http.StatusBadRequest, "BAD_ID", "เลขรีวิวต้องเป็นตัวเลข")
-        return
-    }
-    who := mw.WhoFrom(r.Context())
-    err := h.Store.DeleteReview(r.Context(), reviewID, who.ID, who.Role == "admin")
-    if errors.Is(err, store.ErrNotFound) {
-        writeError(w, http.StatusNotFound, "REVIEW_NOT_FOUND", "ไม่พบรีวิวนี้")
-        return
-    }
-    if err != nil {
-        internal(w, err)
-        return
-    }
-    w.WriteHeader(http.StatusNoContent)
+	reviewID, ok := pathID(r, "reviewId")
+	if !ok {
+		writeError(w, http.StatusBadRequest, "BAD_ID", "รหัสรีวิวต้องเป็นตัวเลขที่มากกว่า 0")
+		return
+	}
+
+	who := mw.WhoFrom(r.Context())
+
+	err := h.Store.DeleteReview(
+		r.Context(),
+		reviewID,
+		who.ID,
+		who.Role == "admin",
+	)
+
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "REVIEW_NOT_FOUND", "ไม่พบรีวิวนี้")
+		return
+	}
+
+	if err != nil {
+		internal(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }

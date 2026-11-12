@@ -1,3 +1,4 @@
+
 package handler
 
 import (
@@ -7,8 +8,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"moviehub/auth"
-	"moviehub/store"
+	"mareview/auth"
+	"mareview/store"
 )
 
 type registerReq struct {
@@ -22,66 +23,150 @@ type loginReq struct {
 	Password string `json:"password"`
 }
 
+// Register สมัครสมาชิกใหม่
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	var req registerReq
+
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "BAD_JSON", "อ่านกล่อง JSON ไม่ออก")
+		writeError(
+			w,
+			http.StatusBadRequest,
+			"BAD_JSON",
+			"รูปแบบ JSON ไม่ถูกต้อง",
+		)
 		return
 	}
+
 	email := strings.ToLower(strings.TrimSpace(req.Email))
 	name := strings.TrimSpace(req.DisplayName)
+
 	switch {
-	case !strings.Contains(email, "@") || len(email) > 255:
-		writeError(w, http.StatusBadRequest, "BAD_EMAIL", "รูปแบบอีเมลไม่ถูกต้อง")
+	case email == "" || !strings.Contains(email, "@") || len(email) > 255:
+		writeError(
+			w,
+			http.StatusBadRequest,
+			"BAD_EMAIL",
+			"รูปแบบอีเมลไม่ถูกต้อง",
+		)
 		return
+
 	case utf8.RuneCountInString(req.Password) < 8 || len(req.Password) > 72:
-		writeError(w, http.StatusBadRequest, "BAD_PASSWORD", "รหัสผ่านต้องยาว 8 ตัวอักษรขึ้นไป และไม่เกิน 72 ไบต์")
+		writeError(
+			w,
+			http.StatusBadRequest,
+			"BAD_PASSWORD",
+			"รหัสผ่านต้องมีอย่างน้อย 8 ตัวอักษร และไม่เกิน 72 ไบต์",
+		)
 		return
+
 	case name == "" || utf8.RuneCountInString(name) > 50:
-		writeError(w, http.StatusBadRequest, "BAD_NAME", "ต้องมีชื่อที่แสดง และยาวไม่เกิน 50 ตัวอักษร")
+		writeError(
+			w,
+			http.StatusBadRequest,
+			"BAD_NAME",
+			"กรุณากรอกชื่อที่แสดง โดยต้องไม่เกิน 50 ตัวอักษร",
+		)
 		return
 	}
+
+	// เข้ารหัสรหัสผ่านก่อนบันทึกลงฐานข้อมูล
 	hash, err := auth.HashPassword(req.Password)
 	if err != nil {
 		internal(w, err)
 		return
 	}
-	m, err := h.Store.CreateMember(r.Context(), email, hash, name)
+
+	// สร้างสมาชิกใหม่
+	member, err := h.Store.CreateMember(
+		r.Context(),
+		email,
+		hash,
+		name,
+	)
+
 	if errors.Is(err, store.ErrEmailTaken) {
-		writeError(w, http.StatusConflict, "EMAIL_TAKEN", "อีเมลนี้มีบัญชีอยู่แล้ว")
+		writeError(
+			w,
+			http.StatusConflict,
+			"EMAIL_TAKEN",
+			"อีเมลนี้มีบัญชีอยู่แล้ว",
+		)
 		return
 	}
+
 	if err != nil {
 		internal(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, m)
+
+	writeJSON(w, http.StatusCreated, member)
 }
 
+// Login เข้าสู่ระบบสมาชิก
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	var req loginReq
+
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "BAD_JSON", "อ่านกล่อง JSON ไม่ออก")
+		writeError(
+			w,
+			http.StatusBadRequest,
+			"BAD_JSON",
+			"รูปแบบ JSON ไม่ถูกต้อง",
+		)
 		return
 	}
+
 	email := strings.ToLower(strings.TrimSpace(req.Email))
-	m, err := h.Store.MemberByEmail(r.Context(), email)
+
+	if email == "" || req.Password == "" {
+		writeError(
+			w,
+			http.StatusBadRequest,
+			"MISSING_CREDENTIALS",
+			"กรุณากรอกอีเมลและรหัสผ่าน",
+		)
+		return
+	}
+
+	// ค้นหาสมาชิกจากอีเมล
+	member, err := h.Store.MemberByEmail(r.Context(), email)
+
 	if errors.Is(err, store.ErrNotFound) {
-		writeError(w, http.StatusUnauthorized, "BAD_CREDENTIALS", "อีเมลหรือรหัสผ่านไม่ถูกต้อง")
+		writeError(
+			w,
+			http.StatusUnauthorized,
+			"BAD_CREDENTIALS",
+			"อีเมลหรือรหัสผ่านไม่ถูกต้อง",
+		)
 		return
 	}
+
 	if err != nil {
 		internal(w, err)
 		return
 	}
-	if !auth.CheckPassword(m.PasswordHash, req.Password) {
-		writeError(w, http.StatusUnauthorized, "BAD_CREDENTIALS", "อีเมลหรือรหัสผ่านไม่ถูกต้อง")
+
+	// ตรวจสอบรหัสผ่านกับ bcrypt hash
+	if !auth.CheckPassword(member.PasswordHash, req.Password) {
+		writeError(
+			w,
+			http.StatusUnauthorized,
+			"BAD_CREDENTIALS",
+			"อีเมลหรือรหัสผ่านไม่ถูกต้อง",
+		)
 		return
 	}
-	token, err := h.Tickets.Issue(m.ID, m.Role)
+
+	// สร้าง JWT Token
+	token, err := h.Tickets.Issue(member.ID, member.Role)
 	if err != nil {
 		internal(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"token": token, "member": m})
+
+	// ส่ง Token และข้อมูลสมาชิกกลับไป
+	writeJSON(w, http.StatusOK, map[string]any{
+		"token":  token,
+		"member": member,
+	})
 }

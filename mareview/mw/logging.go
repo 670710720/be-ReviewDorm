@@ -11,17 +11,31 @@ type recorder struct {
 	status int
 }
 
+// WriteHeader บันทึก HTTP Status Code
 func (r *recorder) WriteHeader(code int) {
 	r.status = code
 	r.ResponseWriter.WriteHeader(code)
 }
 
-// Logging จดแค่ method path status เวลา ไม่จด header ใดๆ เพราะมีตั๋วอยู่ในนั้น
+// Logging บันทึก Method, Path, Status และเวลาที่ใช้ในการประมวลผล
+// ไม่บันทึก Header เพราะอาจมี Token อยู่ในนั้น
 func Logging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		rec := &recorder{ResponseWriter: w, status: http.StatusOK}
+
+		rec := &recorder{
+			ResponseWriter: w,
+			status:         http.StatusOK,
+		}
+
 		next.ServeHTTP(rec, r)
-		log.Printf("%s %s %d %v", r.Method, r.URL.Path, rec.status, time.Since(start).Round(time.Microsecond))
+
+		log.Printf(
+			"%s %s %d %v",
+			r.Method,
+			r.URL.Path,
+			rec.status,
+			time.Since(start).Round(time.Microsecond),
+		)
 	})
 }

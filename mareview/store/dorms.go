@@ -2,40 +2,83 @@ package store
 
 import "context"
 
-type Movie struct {
-	ID      int64   `json:"id"`
-	Title   string  `json:"title"`
-	TitleTh *string `json:"titleTh"`
-	Genre   *string `json:"genre"`
-	Year    *int    `json:"year"`
-	Rating  float64 `json:"rating"`
-	Poster  *string `json:"poster"`
+// Dormitory ข้อมูลหอพัก
+type Dormitory struct {
+	ID          int64    `json:"id"`
+	Name        string   `json:"name"`
+	MinPrice    float64  `json:"minPrice"`
+	MaxPrice    float64  `json:"maxPrice"`
+	DormTypeID  int64    `json:"dormTypeId"`
+	DormType    *string  `json:"dormType"`
+	GenderTypeID int64   `json:"genderTypeId"`
+	GenderType  *string  `json:"genderType"`
+	GoogleMapURL *string `json:"googleMapUrl"`
+	ContactURL   *string `json:"contactUrl"`
+	Description  *string `json:"description"`
+	RatingAverage float64 `json:"ratingAverage"`
+	RatingCount   int     `json:"ratingCount"`
+	Images        []string `json:"images"`
 }
 
-// SearchMovies ค่าจากผู้ใช้เดินทางผ่าน $1 แยกจากคำสั่งเสมอ
-func (s *Store) SearchMovies(ctx context.Context, q string) ([]Movie, error) {
+// SearchDormitories ค้นหาหอพักด้วยชื่อ โดยใช้ $1 แยกจากคำสั่ง SQL
+func (s *Store) SearchDormitories(ctx context.Context, q string) ([]Dormitory, error) {
 	rows, err := s.Pool.Query(ctx,
-		`SELECT m.id, m.title, m.title_th,
-                (SELECT coalesce(g.name_th, g.name_en) FROM movie_genres mg
-                   JOIN genres g ON g.id = mg.genre_id
-                  WHERE mg.movie_id = m.id AND mg.position = 0),
-                extract(year FROM m.release_date)::int,
-                round(m.vote_average, 1)::float8,
-                'https://image.tmdb.org/t/p/w500' || m.poster_path
-         FROM movies m
-         WHERE lower(m.title) LIKE '%' || lower($1) || '%'
-         ORDER BY m.popularity DESC`, q)
+		`SELECT
+			d.dorm_id,
+			d.dorm_name,
+			d.min_price,
+			d.max_price,
+			d.dorm_type_id,
+			dt.dorm_type_name,
+			d.gender_type_id,
+			gt.gender_type_name,
+			d.google_map_url,
+			d.contact_url,
+			d.description,
+			d.rating_average,
+			d.rating_count
+		FROM dormitories d
+		LEFT JOIN dorm_types dt ON dt.dorm_type_id = d.dorm_type_id
+		LEFT JOIN gender_types gt ON gt.gender_type_id = d.gender_type_id
+		WHERE lower(d.dorm_name) LIKE '%' || lower($1) || '%'
+		ORDER BY d.rating_average DESC, d.dorm_name ASC`,
+		q,
+	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := []Movie{}
+
+	out := []Dormitory{}
+
 	for rows.Next() {
-		var m Movie
-		if err := rows.Scan(&m.ID, &m.Title, &m.TitleTh, &m.Genre, &m.Year, &m.Rating, &m.Poster); err != nil {
+		var d Dormitory
+
+		if err := rows.Scan(
+			&d.ID,
+			&d.Name,
+			&d.MinPrice,
+			&d.MaxPrice,
+			&d.DormTypeID,
+			&d.DormType,
+			&d.GenderTypeID,
+			&d.GenderType,
+			&d.GoogleMapURL,
+			&d.ContactURL,
+			&d.Description,
+			&d.RatingAverage,
+			&d.RatingCount,
+		); err != nil {
 			return nil, err
 		}
-		out = append(out, m)
+
+		d.Images = []string{}
+		out = append(out, d)
 	}
-	return out, rows.Err()
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return out, nil
 }

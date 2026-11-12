@@ -1,16 +1,17 @@
 package store
 
 import (
-    "context"
-    "errors"
-    "time"
+	"context"
+	"errors"
+	"time"
 
-    "github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 var (
-    ErrDuplicate = errors.New("duplicate")
-    ErrNoMovie   = errors.New("movie not found")
+	ErrDuplicate   = errors.New("duplicate")
+	ErrNoDormitory = errors.New("dormitory not found")
 )
 
 type ReviewAuthor struct {
@@ -21,69 +22,123 @@ type ReviewAuthor struct {
 type Review struct {
 	ID        int64        `json:"id"`
 	MemberID  int64        `json:"memberId"`
-	MovieID   int64        `json:"movieId"`
+	DormID    int64        `json:"dormId"`
 	Text      string       `json:"text"`
+	Rating    int16        `json:"rating"`
 	CreatedAt time.Time    `json:"createdAt"`
-	UpdatedAt time.Time    `json:"updatedAt"`
 	Member    ReviewAuthor `json:"member"`
-	Score     *int16       `json:"score"`
 }
 
-func (s *Store) ListReviews(ctx context.Context, movieID int64) ([]Review, error) {
+// ListReviews แสดงรีวิวทั้งหมดของหอพัก
+func (s *Store) ListReviews(ctx context.Context, dormID int64) ([]Review, error) {
 	rows, err := s.Pool.Query(ctx,
-		`SELECT r.id, r.member_id, r.movie_id, r.text, r.created_at, r.updated_at,
-                m.display_name, v.score
-         FROM reviews r
-         JOIN members m ON m.id = r.member_id
-         LEFT JOIN votes v ON v.member_id = r.member_id AND v.movie_id = r.movie_id
-         WHERE r.movie_id = $1
-         ORDER BY r.created_at DESC`, movieID)
+		`SELECT
+			r.review_id,
+			r.member_id,
+			r.dorm_id,
+			r.comment,
+			r.rating,
+			r.created_at,
+			m.display_name
+		FROM dorm_reviews r
+		JOIN members m ON m.member_id = r.member_id
+		WHERE r.dorm_id = $1
+		ORDER BY r.created_at DESC`,
+		dormID,
+	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+
 	out := []Review{}
+
 	for rows.Next() {
 		var r Review
-		if err := rows.Scan(&r.ID, &r.MemberID, &r.MovieID, &r.Text,
-			&r.CreatedAt, &r.UpdatedAt, &r.Member.DisplayName, &r.Score); err != nil {
+
+		if err := rows.Scan(
+			&r.ID,
+			&r.MemberID,
+			&r.DormID,
+			&r.Text,
+			&r.Rating,
+			&r.CreatedAt,
+			&r.Member.DisplayName,
+		); err != nil {
 			return nil, err
 		}
+
 		r.Member.ID = r.MemberID
 		out = append(out, r)
 	}
+
 	return out, rows.Err()
 }
 
-func (s *Store) AddReview(ctx context.Context, memberID, movieID int64, text string) (Review, error) {
-    r := Review{MemberID: memberID, MovieID: movieID, Text: text}
-    err := s.Pool.QueryRow(ctx,
-        `INSERT INTO reviews (member_id, movie_id, text)
-         VALUES ($1, $2, $3)
-         RETURNING id, created_at, updated_at`, memberID, movieID, text).
-        Scan(&r.ID, &r.CreatedAt, &r.UpdatedAt)
-    var pgErr *pgconn.PgError
-    if errors.As(err, &pgErr) {
-        switch pgErr.Code {
-        case "23505": // ผิดกติกาห้ามซ้ำ
-            return Review{}, ErrDuplicate
-        case "23503": // ผิดกติกาคีย์นอก หนังไม่มีจริง
-            return Review{}, ErrNoMovie
-        }
-    }
-    return r, err
+// AddReview เพิ่มรีวิวหอพัก
+func (s *Store) AddReview(
+	ctx context.Context,
+	memberID, dormID int64,
+	text string,
+	rating int16,
+) (Review, error) {
+	r := Review{
+		MemberID: memberID,
+		DormID:   dormID,
+		Text:     text,
+		Rating:   rating,
+	}
+
+	err := s.Pool.QueryRow(ctx,
+		`INSERT INTO dorm_reviews
+			(member_id, dorm_id, comment, rating)
+		VALUES ($1, $2, $3, $4)
+		RETURNING review_id, created_at`,
+		memberID,
+		dormID,
+		text,
+		rating,
+	).Scan(&r.ID, &r.CreatedAt)
+
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		switch pgErr.Code {
+		case "23505":
+			return Review{}, ErrDuplicate
+		case "23503":
+			return Review{}, ErrNoDormitory
+		case "23514":
+			return Review{}, errors.New("rating must be between 1 and 5")
+		}
+	}
+
+	return r, err
 }
 
-// DeleteReview ลบได้เมื่อเป็นเจ้าของรีวิว หรือเป็นแอดมิน
-func (s *Store) DeleteReview(ctx context.Context, reviewID, memberID int64, isAdmin bool) error {
-    tag, err := s.Pool.Exec(ctx,
-        `DELETE FROM reviews
-         WHERE id = $1 AND (member_id = $2 OR $3)`, reviewID, memberID, isAdmin)
-    if err != nil {
-        return err
-    }
-    if tag.RowsAffected() == 0 {
-        return ErrNotFound
-    }
-    return nil
+// DeleteReview ลบรีวิวได้เมื่อเป็นเจ้าของรีวิว หรือเป็นแอดมิน
+func (s *Store) DeleteReview(
+	ctx context.Context,
+	reviewID, memberID int64,
+	isAdmin bool,
+) error {
+	tag, err := s.Pool.Exec(ctx,
+		`DELETE FROM dorm_reviews
+		WHERE review_id = $1
+		AND (member_id = $2 OR $3)`,
+		reviewID,
+		memberID,
+		isAdmin,
+	)
+	if err != nil {
+		return err
+	}
+
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+
+	return nil
 }
+
+// ป้องกันการใช้ pgx import โดยไม่จำเป็น
+var _ = pgx.ErrNoRows
