@@ -27,9 +27,11 @@ type Dormitory struct {
 }
 
 // SearchDormitories ค้นหาหอพักด้วยชื่อ
-func (s *Store) SearchDormitories(ctx context.Context, q string) ([]Dormitory, error) {
-	rows, err := s.Pool.Query(ctx,
-		`SELECT
+
+// SearchDormitories ค้นหาหอพักด้วยชื่อและประเภทเพศ
+func (s *Store) SearchDormitories(ctx context.Context, keyword string, gender string) ([]Dormitory, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT
 			d.dorm_id,
 			d.dorm_name,
 			d.min_price,
@@ -42,25 +44,38 @@ func (s *Store) SearchDormitories(ctx context.Context, q string) ([]Dormitory, e
 			d.contact_url,
 			d.description,
 			d.rating_average,
-			d.rating_count
+			d.rating_count,
+			COALESCE(
+				(
+					SELECT json_agg(di.image_url ORDER BY di.image_id)
+					FROM dorm_images di
+					WHERE di.dorm_id = d.dorm_id
+				),
+				'[]'::json
+			) AS images
 		FROM dormitories d
-		LEFT JOIN dorm_types dt ON dt.dorm_type_id = d.dorm_type_id
-		LEFT JOIN gender_types gt ON gt.gender_type_id = d.gender_type_id
-		WHERE lower(d.dorm_name) LIKE '%' || lower($1) || '%'
-		ORDER BY d.rating_average DESC, d.dorm_name ASC`,
-		q,
-	)
+		LEFT JOIN dorm_types dt
+			ON dt.dorm_type_id = d.dorm_type_id
+		LEFT JOIN gender_types gt
+			ON gt.gender_type_id = d.gender_type_id
+		WHERE
+			lower(d.dorm_name) LIKE '%' || lower($1) || '%'
+			AND ($2 = '' OR gt.gender_type_name = $2)
+		ORDER BY d.rating_average DESC, d.dorm_name ASC
+	`, keyword, gender)
+
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	out := []Dormitory{}
+	items := make([]Dormitory, 0)
 
 	for rows.Next() {
 		var d Dormitory
+		var imagesJSON []byte
 
-		if err := rows.Scan(
+		err := rows.Scan(
 			&d.ID,
 			&d.Name,
 			&d.MinPrice,
@@ -74,20 +89,26 @@ func (s *Store) SearchDormitories(ctx context.Context, q string) ([]Dormitory, e
 			&d.Description,
 			&d.RatingAverage,
 			&d.RatingCount,
-		); err != nil {
+			&imagesJSON,
+		)
+		if err != nil {
 			return nil, err
 		}
 
-		d.Images = []string{}
-		out = append(out, d)
+		if err := json.Unmarshal(imagesJSON, &d.Images); err != nil {
+			return nil, err
+		}
+
+		items = append(items, d)
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
-	return out, nil
+	return items, nil
 }
+
 
 // DormitoryByID ดึงข้อมูลหอพักตาม ID
 

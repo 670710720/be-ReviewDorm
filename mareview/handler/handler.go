@@ -54,10 +54,12 @@ func pathID(r *http.Request, name string) (int64, bool) {
 }
 
 // SearchDormitories ค้นหาหอพัก
+
 func (h *Handler) SearchDormitories(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("q")
+	gender := r.URL.Query().Get("gender")
 
-	items, err := h.Store.SearchDormitories(r.Context(), query)
+	items, err := h.Store.SearchDormitories(r.Context(), query, gender)
 	if err != nil {
 		internal(w, err)
 		return
@@ -67,6 +69,7 @@ func (h *Handler) SearchDormitories(w http.ResponseWriter, r *http.Request) {
 		"items": items,
 	})
 }
+
 
 // ListReviews แสดงรีวิวของหอพักตาม ID
 func (h *Handler) ListReviews(w http.ResponseWriter, r *http.Request) {
