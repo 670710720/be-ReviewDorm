@@ -140,6 +140,8 @@ func main() {
 	mux.HandleFunc("POST /api/admin/dormitories", admin(h.AdminCreateDormitory))
 	mux.HandleFunc("PUT /api/admin/dormitories/{id}", admin(h.AdminUpdateDormitory))
 	mux.HandleFunc("DELETE /api/admin/dormitories/{id}", admin(h.AdminDeleteDormitory))
+	   mux.HandleFunc("GET /api/dormitory-types", h.GetDormitoryTypes)
+    mux.HandleFunc("GET /api/gender-types", h.GetGenderTypes)
 
 	// Admin Reviews
 	mux.HandleFunc("GET /api/admin/reviews", admin(h.AdminReviews))
