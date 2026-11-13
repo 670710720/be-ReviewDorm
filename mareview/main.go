@@ -122,19 +122,33 @@ func main() {
 
 	// Dormitories
 	mux.HandleFunc("GET /api/dormitories", h.SearchDormitories)
-	mux.HandleFunc("GET /api/dormitories/{id}",h.GetDormitory)
-
+	mux.HandleFunc("GET /api/dormitories/{id}", h.GetDormitory)
 
 	// Reviews
 	mux.HandleFunc("GET /api/dormitories/{id}/reviews", h.ListReviews)
 	mux.HandleFunc("POST /api/dormitories/{id}/reviews", login(h.AddReview))
-	mux.HandleFunc("DELETE /api/reviews/{reviewId}", login(h.DeleteReview))
+	mux.HandleFunc("DELETE /api/reviews/{id}", login(h.DeleteReview))
 
 	// Member
 	mux.HandleFunc("GET /api/me", login(h.Me))
+	// Admin Dashboard
+	mux.HandleFunc("GET /api/admin/stats", admin(h.AdminStats))
 
-	// Admin
+	// Admin Dormitories
+	mux.HandleFunc("GET /api/admin/dormitories", admin(h.AdminDormitories))
+	mux.HandleFunc("GET /api/admin/dormitories/{id}", admin(h.AdminGetDormitory))
+	mux.HandleFunc("POST /api/admin/dormitories", admin(h.AdminCreateDormitory))
+	mux.HandleFunc("PUT /api/admin/dormitories/{id}", admin(h.AdminUpdateDormitory))
+	mux.HandleFunc("DELETE /api/admin/dormitories/{id}", admin(h.AdminDeleteDormitory))
+
+	// Admin Reviews
+	mux.HandleFunc("GET /api/admin/reviews", admin(h.AdminReviews))
+	mux.HandleFunc("DELETE /api/admin/reviews/{id}", admin(h.DeleteReview))
+
+	// Admin Members
 	mux.HandleFunc("GET /api/admin/members", admin(h.AdminMembers))
+	mux.HandleFunc("PUT /api/admin/members/{id}/role", admin(h.AdminUpdateMemberRole))
+	mux.HandleFunc("DELETE /api/admin/members/{id}", admin(h.AdminDeleteMember))
 
 	// =====================================
 	// 7. CORS Configuration
