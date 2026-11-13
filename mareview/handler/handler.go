@@ -1,8 +1,8 @@
-
 package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -90,4 +90,27 @@ func (h *Handler) ListReviews(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"items": items,
 	})
+}
+
+// GetDormitory แสดงรายละเอียดหอพักตาม ID
+func (h *Handler) GetDormitory(w http.ResponseWriter, r *http.Request) {
+	dormID, ok := pathID(r, "id")
+	if !ok {
+		writeError(w, http.StatusBadRequest, "BAD_ID", "รหัสหอพักต้องเป็นตัวเลขที่มากกว่า 0")
+		return
+	}
+
+	dorm, err := h.Store.DormitoryByID(r.Context(), dormID)
+
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "DORMITORY_NOT_FOUND", "ไม่พบหอพักนี้")
+		return
+	}
+
+	if err != nil {
+		internal(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, dorm)
 }

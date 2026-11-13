@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 
@@ -57,18 +58,31 @@ func main() {
 	)
 	defer cancel()
 
-	pool, err := pgxpool.New(ctx, databaseURL)
+	// Parse Database Configuration
+	poolConfig, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		log.Fatal("อ่าน Database URL ไม่สำเร็จ: ", err)
+	}
 
+	// ปิด Prepared Statement Cache
+	// รองรับ Supabase Transaction Pooler
+	poolConfig.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
+	poolConfig.ConnConfig.StatementCacheCapacity = 0
+
+	// สร้าง Connection Pool
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
 		log.Fatal("สร้างการเชื่อมต่อฐานข้อมูลไม่สำเร็จ: ", err)
 	}
 	defer pool.Close()
 
+	// ตรวจสอบ Database Connection
 	if err := pool.Ping(ctx); err != nil {
 		log.Fatal("เชื่อมต่อฐานข้อมูลไม่สำเร็จ: ", err)
 	}
 
 	log.Println("เชื่อมต่อฐานข้อมูลสำเร็จ")
+	log.Println("PostgreSQL Query Mode: Exec")
 
 	// =====================================
 	// 4. Initialize Handler
@@ -98,49 +112,24 @@ func main() {
 	mux := http.NewServeMux()
 
 	// Authentication
-	mux.HandleFunc(
-		"POST /api/auth/register",
-		h.Register,
-	)
-
-	mux.HandleFunc(
-		"POST /api/auth/login",
-		h.Login,
-	)
+	mux.HandleFunc("POST /api/auth/register", h.Register)
+	mux.HandleFunc("POST /api/auth/login", h.Login)
 
 	// Dormitories
-	mux.HandleFunc(
-		"GET /api/dormitories",
-		h.SearchDormitories,
-	)
+	mux.HandleFunc("GET /api/dormitories", h.SearchDormitories)
+	mux.HandleFunc("GET /api/dormitories/{id}",h.GetDormitory)
+
 
 	// Reviews
-	mux.HandleFunc(
-		"GET /api/dormitories/{id}/reviews",
-		h.ListReviews,
-	)
-
-	mux.HandleFunc(
-		"POST /api/dormitories/{id}/reviews",
-		login(h.AddReview),
-	)
-
-	mux.HandleFunc(
-		"DELETE /api/reviews/{reviewId}",
-		login(h.DeleteReview),
-	)
+	mux.HandleFunc("GET /api/dormitories/{id}/reviews", h.ListReviews)
+	mux.HandleFunc("POST /api/dormitories/{id}/reviews", login(h.AddReview))
+	mux.HandleFunc("DELETE /api/reviews/{reviewId}", login(h.DeleteReview))
 
 	// Member
-	mux.HandleFunc(
-		"GET /api/me",
-		login(h.Me),
-	)
+	mux.HandleFunc("GET /api/me", login(h.Me))
 
 	// Admin
-	mux.HandleFunc(
-		"GET /api/admin/members",
-		admin(h.AdminMembers),
-	)
+	mux.HandleFunc("GET /api/admin/members", admin(h.AdminMembers))
 
 	// =====================================
 	// 7. CORS Configuration
