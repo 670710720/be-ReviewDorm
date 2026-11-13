@@ -26,8 +26,6 @@ type Dormitory struct {
 	Images        []string `json:"images"`
 }
 
-// SearchDormitories ค้นหาหอพักด้วยชื่อ
-
 // SearchDormitories ค้นหาหอพักด้วยชื่อและประเภทเพศ
 func (s *Store) SearchDormitories(ctx context.Context, keyword string, gender string) ([]Dormitory, error) {
 	rows, err := s.Pool.Query(ctx, `
@@ -43,8 +41,8 @@ func (s *Store) SearchDormitories(ctx context.Context, keyword string, gender st
 			d.google_map_url,
 			d.contact_url,
 			d.description,
-			d.rating_average,
-			d.rating_count,
+			COALESCE(rs.rating_average, 0)::float8,
+			COALESCE(rs.rating_count, 0)::int,
 			COALESCE(
 				(
 					SELECT json_agg(di.image_url ORDER BY di.image_id)
@@ -58,10 +56,20 @@ func (s *Store) SearchDormitories(ctx context.Context, keyword string, gender st
 			ON dt.dorm_type_id = d.dorm_type_id
 		LEFT JOIN gender_types gt
 			ON gt.gender_type_id = d.gender_type_id
+		LEFT JOIN (
+			SELECT
+				dorm_id,
+				AVG(rating)::float8 AS rating_average,
+				COUNT(*) AS rating_count
+			FROM dorm_reviews
+			GROUP BY dorm_id
+		) rs ON rs.dorm_id = d.dorm_id
 		WHERE
 			lower(d.dorm_name) LIKE '%' || lower($1) || '%'
 			AND ($2 = '' OR gt.gender_type_name = $2)
-		ORDER BY d.rating_average DESC, d.dorm_name ASC
+		ORDER BY
+			COALESCE(rs.rating_average, 0) DESC,
+			d.dorm_name ASC
 	`, keyword, gender)
 
 	if err != nil {
@@ -109,9 +117,7 @@ func (s *Store) SearchDormitories(ctx context.Context, keyword string, gender st
 	return items, nil
 }
 
-
 // DormitoryByID ดึงข้อมูลหอพักตาม ID
-
 func (s *Store) DormitoryByID(ctx context.Context, id int64) (Dormitory, error) {
 	var d Dormitory
 	var imagesJSON []byte
@@ -129,8 +135,8 @@ func (s *Store) DormitoryByID(ctx context.Context, id int64) (Dormitory, error) 
 			d.google_map_url,
 			d.contact_url,
 			d.description,
-			d.rating_average,
-			d.rating_count,
+			COALESCE(rs.rating_average, 0)::float8,
+			COALESCE(rs.rating_count, 0)::int,
 			COALESCE(
 				(
 					SELECT json_agg(di.image_url ORDER BY di.image_id)
@@ -144,6 +150,14 @@ func (s *Store) DormitoryByID(ctx context.Context, id int64) (Dormitory, error) 
 			ON dt.dorm_type_id = d.dorm_type_id
 		LEFT JOIN gender_types gt
 			ON gt.gender_type_id = d.gender_type_id
+		LEFT JOIN (
+			SELECT
+				dorm_id,
+				AVG(rating)::float8 AS rating_average,
+				COUNT(*) AS rating_count
+			FROM dorm_reviews
+			GROUP BY dorm_id
+		) rs ON rs.dorm_id = d.dorm_id
 		WHERE d.dorm_id = $1
 	`, id).Scan(
 		&d.ID,
