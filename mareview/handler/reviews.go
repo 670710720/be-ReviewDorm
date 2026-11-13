@@ -37,59 +37,64 @@ type reviewReq struct {
 
 // AddReview เพิ่มรีวิวหอพัก
 func (h *Handler) AddReview(w http.ResponseWriter, r *http.Request) {
-	dormID, ok := pathID(r, "id")
-	if !ok {
-		writeError(w, http.StatusBadRequest, "BAD_ID", "รหัสหอพักต้องเป็นตัวเลขที่มากกว่า 0")
-		return
-	}
+    dormID, ok := pathID(r, "id")
+    if !ok {
+        writeError(w, http.StatusBadRequest, "BAD_ID", "รหัสหอพักต้องเป็นตัวเลขที่มากกว่า 0")
+        return
+    }
 
-	var req reviewReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "BAD_JSON", "รูปแบบ JSON ไม่ถูกต้อง")
-		return
-	}
+    var req reviewReq
+    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+        writeError(w, http.StatusBadRequest, "BAD_JSON", "รูปแบบ JSON ไม่ถูกต้อง")
+        return
+    }
 
-	text := strings.TrimSpace(req.Text)
+    text := strings.TrimSpace(req.Text)
 
-	if utf8.RuneCountInString(text) < 10 {
-		writeError(w, http.StatusBadRequest, "REVIEW_TOO_SHORT", "รีวิวต้องมีอย่างน้อย 10 ตัวอักษร")
-		return
-	}
+    if utf8.RuneCountInString(text) < 10 {
+        writeError(w, http.StatusBadRequest, "REVIEW_TOO_SHORT", "รีวิวต้องมีอย่างน้อย 10 ตัวอักษร")
+        return
+    }
 
-	if req.Rating < 1 || req.Rating > 10 {
-		writeError(w, http.StatusBadRequest, "INVALID_RATING", "คะแนนต้องอยู่ระหว่าง 1-5")
-		return
-	}
+    if req.Rating < 1 || req.Rating > 10 {
+        writeError(w, http.StatusBadRequest, "INVALID_RATING", "คะแนนต้องอยู่ระหว่าง 1-10")
+        return
+    }
 
-	who := mw.WhoFrom(r.Context())
+    who := mw.WhoFrom(r.Context())
 
-	rv, err := h.Store.AddReview(
-		r.Context(),
-		who.ID,
-		dormID,
-		text,
-		req.Rating,
-	)
+    rv, err := h.Store.AddReview(
+        r.Context(),
+        who.ID,
+        dormID,
+        text,
+        req.Rating,
+    )
 
-	switch {
-	case errors.Is(err, store.ErrDuplicate):
-		writeError(w, http.StatusConflict, "ALREADY_REVIEWED", "คุณรีวิวหอพักนี้ไปแล้ว")
-		return
+    switch {
+    case errors.Is(err, store.ErrDuplicate):
+        writeError(w, http.StatusConflict, "ALREADY_REVIEWED", "คุณรีวิวหอพักนี้ไปแล้ว")
+        return
 
-	case errors.Is(err, store.ErrNoDormitory):
-		writeError(w, http.StatusNotFound, "DORMITORY_NOT_FOUND", "ไม่พบหอพักนี้")
-		return
+    case errors.Is(err, store.ErrNoDormitory):
+        writeError(w, http.StatusNotFound, "DORMITORY_NOT_FOUND", "ไม่พบหอพักนี้")
+        return
 
-	case err != nil:
-		internal(w, err)
-		return
-	}
+    case errors.Is(err, store.ErrInvalidRating):
+        writeError(w, http.StatusBadRequest, "INVALID_RATING", "คะแนนต้องอยู่ระหว่าง 1-10")
+        return
 
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"id":        rv.ID,
-		"text":      rv.Text,
-		"createdAt": rv.CreatedAt,
-	})
+    case err != nil:
+        internal(w, err)
+        return
+    }
+
+    writeJSON(w, http.StatusCreated, map[string]any{
+        "id":        rv.ID,
+        "text":      rv.Text,
+        "rating":    rv.Rating,
+        "createdAt": rv.CreatedAt,
+    })
 }
 
 // DeleteReview ลบรีวิวของสมาชิก หรือรีวิวที่ผู้ดูแลระบบมีสิทธิ์ลบ
