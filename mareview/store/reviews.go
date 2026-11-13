@@ -5,13 +5,13 @@ import (
 	"errors"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
 var (
-	ErrDuplicate   = errors.New("duplicate")
-	ErrNoDormitory = errors.New("dormitory not found")
+	ErrDuplicate      = errors.New("duplicate")
+	ErrNoDormitory    = errors.New("dormitory not found")
+	ErrInvalidRating  = errors.New("rating must be between 1 and 10")
 )
 
 type ReviewAuthor struct {
@@ -82,6 +82,11 @@ func (s *Store) AddReview(
 	text string,
 	rating int16,
 ) (Review, error) {
+	// ตรวจสอบคะแนน 1-10
+	if rating < 1 || rating > 10 {
+		return Review{}, ErrInvalidRating
+	}
+
 	r := Review{
 		MemberID: memberID,
 		DormID:   dormID,
@@ -100,19 +105,22 @@ func (s *Store) AddReview(
 		rating,
 	).Scan(&r.ID, &r.CreatedAt)
 
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
-		switch pgErr.Code {
-		case "23505":
-			return Review{}, ErrDuplicate
-		case "23503":
-			return Review{}, ErrNoDormitory
-		case "23514":
-			return Review{}, errors.New("rating must be between 1 and 5")
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) {
+			switch pgErr.Code {
+			case "23505":
+				return Review{}, ErrDuplicate
+			case "23503":
+				return Review{}, ErrNoDormitory
+			case "23514":
+				return Review{}, ErrInvalidRating
+			}
 		}
+		return Review{}, err
 	}
 
-	return r, err
+	return r, nil
 }
 
 // DeleteReview ลบรีวิวได้เมื่อเป็นเจ้าของรีวิว หรือเป็นแอดมิน
@@ -139,6 +147,3 @@ func (s *Store) DeleteReview(
 
 	return nil
 }
-
-// ป้องกันการใช้ pgx import โดยไม่จำเป็น
-var _ = pgx.ErrNoRows

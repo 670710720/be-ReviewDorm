@@ -111,6 +111,11 @@ func main() {
 
 	mux := http.NewServeMux()
 
+	// Wishlist
+	mux.HandleFunc("GET /api/me/wishlist", login(h.GetWishlist))
+	mux.HandleFunc("POST /api/dormitories/{id}/wishlist", login(h.AddWishlist))
+	mux.HandleFunc("DELETE /api/dormitories/{id}/wishlist", login(h.RemoveWishlist))
+
 	// Authentication
 	mux.HandleFunc("POST /api/auth/register", h.Register)
 	mux.HandleFunc("POST /api/auth/login", h.Login)
