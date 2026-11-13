@@ -56,7 +56,7 @@ func (s *Store) Stats(ctx context.Context) (AdminStats, error) {
 			(SELECT count(*) FROM members),
 			(SELECT count(*) FROM members WHERE role = 'admin'),
 			(SELECT count(*) FROM dorm_reviews),
-			(SELECT count(*) FROM dorm_ratings),
+			(SELECT count(*) FROM dorm_reviews),
 			(SELECT count(*) FROM dorm_wishlists)
 	`).Scan(
 		&st.Dormitories,
@@ -105,7 +105,7 @@ func (s *Store) Stats(ctx context.Context) (AdminStats, error) {
 		return st, err
 	}
 
-	// หอพักคะแนนสูงสุด 5 อันดับ
+	// หอพักคะแนนสูงสุด 5 อันดับ คำนวณจาก dorm_reviews
 	rows, err = s.Pool.Query(ctx, `
 		SELECT
 			d.dorm_id,
@@ -113,8 +113,14 @@ func (s *Store) Stats(ctx context.Context) (AdminStats, error) {
 			COALESCE(rs.rating_average, 0)::float8,
 			COALESCE(rs.rating_count, 0)
 		FROM dormitories d
-		LEFT JOIN dorm_rating_stats rs
-			ON rs.dorm_id = d.dorm_id
+		LEFT JOIN (
+			SELECT
+				dorm_id,
+				AVG(rating)::float8 AS rating_average,
+				COUNT(*) AS rating_count
+			FROM dorm_reviews
+			GROUP BY dorm_id
+		) rs ON rs.dorm_id = d.dorm_id
 		ORDER BY
 			COALESCE(rs.rating_average, 0) DESC,
 			COALESCE(rs.rating_count, 0) DESC
@@ -147,7 +153,6 @@ func (s *Store) Stats(ctx context.Context) (AdminStats, error) {
 // Dormitory Management
 // =====================================================
 
-// DormitoryInput ข้อมูลที่ Admin สามารถเพิ่มหรือแก้ไขได้
 type DormitoryInput struct {
 	Name         string   `json:"name"`
 	MinPrice     float64  `json:"minPrice"`
@@ -190,7 +195,7 @@ func (s *Store) AdminGetDormitory(
 		SELECT
 			d.updated_at,
 			(SELECT count(*) FROM dorm_reviews WHERE dorm_id = d.dorm_id),
-			(SELECT count(*) FROM dorm_ratings WHERE dorm_id = d.dorm_id),
+			(SELECT count(*) FROM dorm_reviews WHERE dorm_id = d.dorm_id),
 			(SELECT count(*) FROM dorm_wishlists WHERE dorm_id = d.dorm_id)
 		FROM dormitories d
 		WHERE d.dorm_id = $1
@@ -221,8 +226,8 @@ func (s *Store) ListAdminDormitories(
 			d.google_map_url,
 			d.contact_url,
 			d.description,
-			d.rating_average,
-			d.rating_count,
+			COALESCE(rs.rating_average, 0)::float8,
+			COALESCE(rs.rating_count, 0)::int,
 			COALESCE(
 				(
 					SELECT json_agg(di.image_url ORDER BY di.image_order)
@@ -236,6 +241,14 @@ func (s *Store) ListAdminDormitories(
 			ON dt.dorm_type_id = d.dorm_type_id
 		LEFT JOIN gender_types gt
 			ON gt.gender_type_id = d.gender_type_id
+		LEFT JOIN (
+			SELECT
+				dorm_id,
+				AVG(rating)::float8 AS rating_average,
+				COUNT(*) AS rating_count
+			FROM dorm_reviews
+			GROUP BY dorm_id
+		) rs ON rs.dorm_id = d.dorm_id
 		ORDER BY d.dorm_id DESC
 	`)
 	if err != nil {
@@ -452,7 +465,6 @@ func (s *Store) DeleteDormitory(
 		return ErrNotFound
 	}
 
-	// รูปภาพ รีวิว คะแนน และ Wishlist จะถูกลบด้วย CASCADE
 	return nil
 }
 
@@ -519,30 +531,6 @@ func (s *Store) ListAdminReviews(
 
 	return items, rows.Err()
 }
-
-// DeleteReview ลบรีวิว
-// func (s *Store) DeleteReview(
-// 	ctx context.Context,
-// 	id int64,
-// ) error {
-// 	tag, err := s.Pool.Exec(ctx,
-// 		`DELETE FROM dorm_reviews WHERE review_id = $1`,
-// 		id,
-// 	)
-// 	if err != nil {
-// 		return err
-// 	}
-
-// 	if tag.RowsAffected() == 0 {
-// 		return ErrNotFound
-// 	}
-
-// 	return nil
-// }
-
-// =====================================================
-// Member Management
-// =====================================================
 
 // ListAdminMembers แสดงสมาชิกทั้งหมด
 func (s *Store) ListAdminMembers(
@@ -619,7 +607,6 @@ func (s *Store) UpdateMemberRole(
 		return err
 	}
 
-	// ป้องกันการลดสิทธิ์ Admin คนสุดท้าย
 	if currentRole == "admin" && role != "admin" {
 		var count int64
 
@@ -652,8 +639,7 @@ func (s *Store) UpdateMemberRole(
 	return tx.Commit(ctx)
 }
 
-// DeleteMember ลบสมาชิก
-// ข้อมูลรีวิว คะแนน และ Wishlist จะถูกลบด้วย CASCADE
+// DeleteMember ลบสมาชิกที่ไม่ใช่ Admin
 func (s *Store) DeleteMember(
 	ctx context.Context,
 	id int64,
