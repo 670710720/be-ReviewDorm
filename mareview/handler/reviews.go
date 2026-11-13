@@ -56,7 +56,7 @@ func (h *Handler) AddReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Rating < 1 || req.Rating > 5 {
+	if req.Rating < 1 || req.Rating > 10 {
 		writeError(w, http.StatusBadRequest, "INVALID_RATING", "คะแนนต้องอยู่ระหว่าง 1-5")
 		return
 	}
