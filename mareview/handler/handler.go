@@ -1,65 +1,42 @@
+
 package handler
 
 import (
 	"encoding/json"
 	"errors"
-	"log"
 	"net/http"
 	"strconv"
 
-	"mareview/auth"
 	"mareview/store"
 )
 
-// Handler จัดการ HTTP Request ของระบบรีวิวหอพัก
-type Handler struct {
-	Store   *store.Store
-	Tickets *auth.Issuer
-}
+// AdminMembers แสดงรายการสมาชิก
+func (h *Handler) AdminMembers(w http.ResponseWriter, r *http.Request) {
+	members, err := h.Store.ListAdminMembers(r.Context())
+	if err != nil {
+		internal(w, err)
+		return
+	}
 
-// writeJSON ส่งข้อมูลกลับในรูปแบบ JSON
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-// writeError ส่งข้อความแจ้งข้อผิดพลาด
-func writeError(w http.ResponseWriter, status int, code, message string) {
-	writeJSON(w, status, map[string]any{
-		"error": map[string]string{
-			"code":    code,
-			"message": message,
-		},
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items": members,
 	})
 }
 
-// internal บันทึกรายละเอียดข้อผิดพลาดไว้ใน log
-// และส่งข้อความทั่วไปกลับไปยังผู้ใช้
-func internal(w http.ResponseWriter, err error) {
-	log.Printf("internal error: %v", err)
+// AdminStats แสดง Dashboard
+func (h *Handler) AdminStats(w http.ResponseWriter, r *http.Request) {
+	stats, err := h.Store.Stats(r.Context())
+	if err != nil {
+		internal(w, err)
+		return
+	}
 
-	writeError(
-		w,
-		http.StatusInternalServerError,
-		"INTERNAL",
-		"ระบบขัดข้อง ลองใหม่อีกครั้ง",
-	)
+	writeJSON(w, http.StatusOK, stats)
 }
 
-// pathID อ่าน ID จาก URL และตรวจสอบว่าเป็นตัวเลขที่มากกว่า 0
-func pathID(r *http.Request, name string) (int64, bool) {
-	id, err := strconv.ParseInt(r.PathValue(name), 10, 64)
-	return id, err == nil && id > 0
-}
-
-// SearchDormitories ค้นหาหอพัก
-
-func (h *Handler) SearchDormitories(w http.ResponseWriter, r *http.Request) {
-	query := r.URL.Query().Get("q")
-	gender := r.URL.Query().Get("gender")
-
-	items, err := h.Store.SearchDormitories(r.Context(), query, gender)
+// AdminDormitories แสดงรายการหอพักทั้งหมด
+func (h *Handler) AdminDormitories(w http.ResponseWriter, r *http.Request) {
+	items, err := h.Store.ListAdminDormitories(r.Context())
 	if err != nil {
 		internal(w, err)
 		return
@@ -70,21 +47,106 @@ func (h *Handler) SearchDormitories(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-
-// ListReviews แสดงรีวิวของหอพักตาม ID
-func (h *Handler) ListReviews(w http.ResponseWriter, r *http.Request) {
-	dormID, ok := pathID(r, "id")
-	if !ok {
-		writeError(
-			w,
-			http.StatusBadRequest,
-			"BAD_ID",
-			"รหัสหอพักต้องเป็นตัวเลขที่มากกว่า 0",
-		)
+// AdminGetDormitory ดูรายละเอียดหอพัก
+func (h *Handler) AdminGetDormitory(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid dormitory id", http.StatusBadRequest)
 		return
 	}
 
-	items, err := h.Store.ListReviews(r.Context(), dormID)
+	item, err := h.Store.AdminGetDormitory(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, "dormitory not found", http.StatusNotFound)
+			return
+		}
+		internal(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, item)
+}
+
+// AdminCreateDormitory เพิ่มหอพัก
+func (h *Handler) AdminCreateDormitory(w http.ResponseWriter, r *http.Request) {
+	var input store.DormitoryInput
+
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	item, err := h.Store.CreateDormitory(r.Context(), input)
+	if err != nil {
+		if errors.Is(err, store.ErrBadImages) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		internal(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, item)
+}
+
+// AdminUpdateDormitory แก้ไขหอพัก
+func (h *Handler) AdminUpdateDormitory(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid dormitory id", http.StatusBadRequest)
+		return
+	}
+
+	var input store.DormitoryInput
+
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	item, err := h.Store.UpdateDormitory(r.Context(), id, input)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, "dormitory not found", http.StatusNotFound)
+			return
+		}
+		if errors.Is(err, store.ErrBadImages) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		internal(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, item)
+}
+
+// AdminDeleteDormitory ลบหอพัก
+func (h *Handler) AdminDeleteDormitory(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid dormitory id", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.Store.DeleteDormitory(r.Context(), id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, "dormitory not found", http.StatusNotFound)
+			return
+		}
+		internal(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message": "dormitory deleted successfully",
+	})
+}
+
+// AdminReviews แสดงรีวิวทั้งหมด
+func (h *Handler) AdminReviews(w http.ResponseWriter, r *http.Request) {
+	items, err := h.Store.ListAdminReviews(r.Context())
 	if err != nil {
 		internal(w, err)
 		return
@@ -95,25 +157,60 @@ func (h *Handler) ListReviews(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GetDormitory แสดงรายละเอียดหอพักตาม ID
-func (h *Handler) GetDormitory(w http.ResponseWriter, r *http.Request) {
-	dormID, ok := pathID(r, "id")
-	if !ok {
-		writeError(w, http.StatusBadRequest, "BAD_ID", "รหัสหอพักต้องเป็นตัวเลขที่มากกว่า 0")
-		return
-	}
-
-	dorm, err := h.Store.DormitoryByID(r.Context(), dormID)
-
-	if errors.Is(err, store.ErrNotFound) {
-		writeError(w, http.StatusNotFound, "DORMITORY_NOT_FOUND", "ไม่พบหอพักนี้")
-		return
-	}
-
+// AdminUpdateMemberRole เปลี่ยน Role สมาชิก
+func (h *Handler) AdminUpdateMemberRole(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
+		http.Error(w, "invalid member id", http.StatusBadRequest)
+		return
+	}
+
+	var input struct {
+		Role string `json:"role"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	err = h.Store.UpdateMemberRole(r.Context(), id, input.Role)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, "member not found", http.StatusNotFound)
+			return
+		}
+		if errors.Is(err, store.ErrBadRole) || errors.Is(err, store.ErrLastAdmin) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		internal(w, err)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, dorm)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message": "member role updated successfully",
+	})
+}
+
+// AdminDeleteMember ลบสมาชิก
+func (h *Handler) AdminDeleteMember(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid member id", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.Store.DeleteMember(r.Context(), id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, "member not found or cannot delete admin", http.StatusNotFound)
+			return
+		}
+		internal(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message": "member deleted successfully",
+	})
 }

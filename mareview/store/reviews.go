@@ -83,7 +83,7 @@ func (s *Store) AddReview(
 	rating int16,
 ) (Review, error) {
 	// ตรวจสอบคะแนน 1-10
-	if rating < 1 || rating > 10 {
+	if rating < 1 || rating > 5 {
 		return Review{}, ErrInvalidRating
 	}
 
